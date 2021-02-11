@@ -1,94 +1,71 @@
-// @ts-check
-const puppeteer = require('puppeteer')
-const cheerio = require('cheerio')
-const moment = require('moment')
-const Asana = require('./asana')
-const { AZING, ASANA, MAIL_LIST, SUPPORTERS } = require('./config.json')
+import moment from 'moment'
 
-async function getMails() {
-  // prettier-ignore
-  const browser = await puppeteer.launch({ headless: false, defaultViewport: null })
-  const page = await browser.newPage()
-  const { USERNAME, PASSWORD } = AZING.WEB_MAIL
-  // prettier-ignore
-  const Authorization = `Basic ` + Buffer.from(`${USERNAME}:${PASSWORD}`).toString("base64")
-  await page.setExtraHTTPHeaders({ Authorization })
-  await page.goto(AZING.WEB_MAIL.URL)
+import Asana from './src/api/Asana.js'
+import WebMailPage from './src/pages/WebMailPage'
+import { AZING, ASANA, MAIL_LIST, SUPPORTERS } from './config.json'
 
-  {
-    // ログイン
-    await page.type('#rcmloginuser', AZING.ACCOUNT.USERNAME)
-    await page.type('#rcmloginpwd', AZING.ACCOUNT.PASSWORD)
-    await page.click('#rcmloginsubmit')
-    await page.waitForNavigation({ waitUntil: 'domcontentloaded' })
-  }
-  {
-    // 絞り込み
-    await page.type('#quicksearchbox', 'training')
-    await page.waitForTimeout(1000)
-    await (await page.$('#quicksearchbox')).press('Enter')
-    await page.waitForTimeout(2000)
-  }
+type Mail = { rookie: string; supporter: string; body: string }
 
-  const html = await page.$eval('#messagelist', (e) => e.outerHTML)
-  const $ = cheerio.load(html)
+async function getMails(): Promise<Mail[]> {
+  const mails: Mail[] = []
 
-  const lastMonday = moment().startOf('week').startOf('day')
-  const rows = $('tr')
-    .toArray()
-    .filter((el) => lastMonday.isBefore(new Date($(el).find('.date').text())))
+  const page = new WebMailPage()
 
-  const mails = []
+  const { USERNAME, PASSWORD, URL } = AZING.WEB_MAIL
+  await page.open(URL, USERNAME, PASSWORD)
 
-  for (const row of rows) {
+  await page.login(AZING.ACCOUNT.USERNAME, AZING.ACCOUNT.PASSWORD)
+
+  await page.filterMailList('training')
+
+  const list = await page.getRookieMailList()
+  const $ = await page.getTable()
+
+  for (const row of list) {
+    // メアドを取得
     const senderMail = $(row).find('.rcmContactAddress').attr('title')
     const rookie = MAIL_LIST.find((m) => m.email === senderMail)
 
     if (rookie) {
       console.log(`getMails - ${rookie.name}`)
 
-      await page.click('#' + $(row).attr('id'))
-      await page.keyboard.press('Enter')
-      await page.waitForTimeout(1500)
+      await page.goDetailPage(`#${$(row).attr('id')}`)
 
-      const body =
-        (await page.$('#messagebody pre')) !== null
-          ? await page.$eval('#messagebody pre', (e) => e.textContent)
-          : await page.evaluate(
-              // @ts-ignore
-              () => document.querySelector('#messagebody').innerText
-            )
+      const body = await page.getMessage()
+
       mails.push({ rookie: rookie.name, supporter: rookie.support, body })
 
-      await page.click('#rcmbtn108')
-      await page.waitForTimeout(1500)
+      await page.pageBack()
     }
   }
 
-  await browser.close()
+  await page.close()
+
   return mails
 }
 
 /**
  * 取得したメールからタスクを作成する
- * @param {{ rookie: string, supporter: string, body: string}[]} mails
  */
-async function updateAsana(mails) {
+async function updateAsana(mails: Mail[]) {
   // 既存セクション取得
   const sections = await Asana.getSections()
   const nextFriday = moment().endOf('week').subtract(1, 'days')
   const formatted = nextFriday.format('YYYY/MM/DD')
-  let nextSection = sections.find((s) => s.name.includes(formatted))
+  let _nextSection = sections.find((s) => s.name.includes(formatted))
 
-  if (!nextSection) {
+  if (!_nextSection) {
     // セクション作成
     console.log(`createSection`)
 
     const count = sections.filter((s) => s.name.includes('メール送信')).length
-    nextSection = await Asana.createSection(
+    _nextSection = await Asana.createSection(
       `メール送信${count + 1}回目 ${formatted}`
     )
   }
+
+  const nextSection = _nextSection!
+
   // 既存タスク取得
   const tasks = await Asana.getTasksFromSection(nextSection.gid)
   const allTasks = tasks.concat(

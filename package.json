@@ -14,5 +14,8 @@
     "cheerio": "^1.0.0-rc.5",
     "moment": "^2.29.1",
     "puppeteer": "^5.5.0"
+  },
+  "devDependencies": {
+    "@types/puppeteer": "^5.4.3"
   }
 }

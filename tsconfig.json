@@ -1,0 +1,10 @@
+{
+    "compilerOptions": {
+        "module": "CommonJS",
+        "resolveJsonModule": true,
+        "allowJs": true,
+        "esModuleInterop": true,
+        "strict": true,
+        "target": "ESNext"
+    }
+}
